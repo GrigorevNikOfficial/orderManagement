@@ -15,4 +15,12 @@ public class OrderManagementContext : DbContext
     {
         optionsBuilder.UseNpgsql(ConnectionString);
     }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        // Map CLR types to lowercase PostgreSQL table names to avoid case-sensitivity issues
+        modelBuilder.Entity<Customer>().ToTable("customers");
+        modelBuilder.Entity<Order>().ToTable("orders");
+        modelBuilder.Entity<Item>().ToTable("items");
+    }
 }
