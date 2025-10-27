@@ -41,47 +41,39 @@ public partial class MainForm : Form
             // Привязываем локальные коллекции к DataGridView для двусторонней привязки
             dataGridView1.DataSource = dbContext.Customers.Local.ToBindingList();
             dataGridView2.DataSource = dbContext.Items.Local.ToBindingList();
-
-            // Для заказов: показываем в гриде не id связанных сущностей, а читаемые поля
-            // Отключаем автогенерацию колонок и создаём нужные колонки вручную.
-            dataGridView3.AutoGenerateColumns = false;
-            dataGridView3.Columns.Clear();
-
-            dataGridView3.Columns.Add(new DataGridViewTextBoxColumn
-            {
-                DataPropertyName = "OrderId",
-                HeaderText = "OrderId",
-                ReadOnly = true
-            });
-
-            // Поддерживается привязка к вложенным свойствам (Navigation.Name)
-            dataGridView3.Columns.Add(new DataGridViewTextBoxColumn
-            {
-                DataPropertyName = "Customer.Name",
-                HeaderText = "Customer",
-                ReadOnly = true
-            });
-
-            dataGridView3.Columns.Add(new DataGridViewTextBoxColumn
-            {
-                DataPropertyName = "Item.Description",
-                HeaderText = "Item",
-                ReadOnly = true
-            });
-
-            dataGridView3.Columns.Add(new DataGridViewTextBoxColumn
-            {
-                DataPropertyName = "Quantity",
-                HeaderText = "Quantity"
-            });
-
-            dataGridView3.Columns.Add(new DataGridViewTextBoxColumn
-            {
-                DataPropertyName = "OrderDate",
-                HeaderText = "Order Date"
-            });
-
             dataGridView3.DataSource = dbContext.Orders.Local.ToBindingList();
+
+            // Скрываем автоматические колонки навигационных свойств и ID, которые не нужны в отображении.
+            // Используем обработчик DataBindingComplete чтобы быть уверенным, что колонки созданы.
+            dataGridView1.DataBindingComplete += (s, ev) =>
+            {
+                // В Customers есть коллекция Orders — не показываем её в гриде (пустая/нечитабельная колонка)
+                if (dataGridView1.Columns["Orders"] != null)
+                    dataGridView1.Columns["Orders"].Visible = false;
+                if (dataGridView1.Columns["CustomerId"] != null)
+                    dataGridView1.Columns["CustomerId"].Visible = false;
+            };
+
+            dataGridView2.DataBindingComplete += (s, ev) =>
+            {
+                // В Items тоже есть коллекция Orders — скрываем
+                if (dataGridView2.Columns["Orders"] != null)
+                    dataGridView2.Columns["Orders"].Visible = false;
+                if (dataGridView2.Columns["ItemId"] != null)
+                    dataGridView2.Columns["ItemId"].Visible = false;
+            };
+
+            dataGridView3.DataBindingComplete += (s, ev) =>
+            {
+                // В Orders скрываем служебные ID — оставляем навигационные свойства (Customer, Item),
+                // т.к. они корректно отображают информацию (ToString() у Customer возвращает имя).
+                var hide = new[] { "OrderId", "CustomerId", "ItemId" };
+                foreach (var name in hide)
+                {
+                    if (dataGridView3.Columns[name] != null)
+                        dataGridView3.Columns[name].Visible = false;
+                }
+            };
         }
         catch (Exception ex)
         {
