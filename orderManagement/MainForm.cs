@@ -3,34 +3,43 @@ using System.Linq;
 using System.Windows.Forms;
 using orderManagement.Data;
 using orderManagement.Models;
+using Microsoft.EntityFrameworkCore;
 
 namespace orderManagement;
 
 public partial class MainForm : Form
 {
+    private OrderManagementContext dbContext;
+    
     public MainForm()
     {
         InitializeComponent();
 
-        // Подписываемся на событие загрузки формы — данные будут загружены при показе формы
+        // Создаем контекст и подписываемся на событие загрузки формы
+        dbContext = new OrderManagementContext();
         this.Load += MainForm_Load;
     }
 
-    private void MainForm_Load(object? sender, EventArgs e)
+    private void MainForm_Load(object sender, EventArgs e)
     {
         // Простая привязка: читаем данные из контекста и передаем списки в качестве источников данных.
         // Можно заменить на .Local.ToBindingList() при необходимости двусторонней привязки.
         try
         {
-            using var ctx = new OrderManagementContext();
+            // EnsureCreated() временно использовался для быстрой проверки локально.
+            // Для корректного управления схемой рекомендуется использовать миграции EF Core.
+            // Если вы используете миграции, закомментируйте или удалите вызов EnsureCreated().
+            // dbContext.Database.EnsureCreated();
 
-            var customers = ctx.Customers.ToList();
-            var items = ctx.Items.ToList();
-            var orders = ctx.Orders.ToList();
+            // Загружаем данные в кэш контекста
+            dbContext.Customers.Load();
+            dbContext.Items.Load();
+            dbContext.Orders.Load();
 
-            dataGridView1.DataSource = customers;
-            dataGridView2.DataSource = items;
-            dataGridView3.DataSource = orders;
+            // Привязываем локальные коллекции к DataGridView для двусторонней привязки
+            dataGridView1.DataSource = dbContext.Customers.Local.ToBindingList();
+            dataGridView2.DataSource = dbContext.Items.Local.ToBindingList();
+            dataGridView3.DataSource = dbContext.Orders.Local.ToBindingList();
         }
         catch (Exception ex)
         {

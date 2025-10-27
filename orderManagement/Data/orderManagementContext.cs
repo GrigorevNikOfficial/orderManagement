@@ -18,9 +18,12 @@ public class OrderManagementContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        // Map CLR types to lowercase PostgreSQL table names to avoid case-sensitivity issues
+        // Используем Fluent API для явного маппинга (полезно для контроля имен таблиц в PostgreSQL)
         modelBuilder.Entity<Customer>().ToTable("customers");
         modelBuilder.Entity<Order>().ToTable("orders");
         modelBuilder.Entity<Item>().ToTable("items");
+
+        // Вызов базовой реализации — оставляем для совместимости
+        base.OnModelCreating(modelBuilder);
     }
 }
