@@ -42,38 +42,23 @@ public partial class MainForm : Form
             dataGridView1.DataSource = dbContext.Customers.Local.ToBindingList();
             dataGridView2.DataSource = dbContext.Items.Local.ToBindingList();
             dataGridView3.DataSource = dbContext.Orders.Local.ToBindingList();
-
-            // Скрываем автоматические колонки навигационных свойств и ID, которые не нужны в отображении.
-            // Используем обработчик DataBindingComplete чтобы быть уверенным, что колонки созданы.
-            dataGridView1.DataBindingComplete += (s, ev) =>
+            
+            if (dataGridView1.Columns.Contains("Orders")) 
             {
-                // В Customers есть коллекция Orders — не показываем её в гриде (пустая/нечитабельная колонка)
-                if (dataGridView1.Columns["Orders"] != null)
-                    dataGridView1.Columns["Orders"].Visible = false;
-                if (dataGridView1.Columns["CustomerId"] != null)
-                    dataGridView1.Columns["CustomerId"].Visible = false;
-            };
-
-            dataGridView2.DataBindingComplete += (s, ev) =>
+                dataGridView1.Columns["Orders"].Visible = false;
+            }
+            if (dataGridView2.Columns.Contains("Orders")) 
             {
-                // В Items тоже есть коллекция Orders — скрываем
-                if (dataGridView2.Columns["Orders"] != null)
-                    dataGridView2.Columns["Orders"].Visible = false;
-                if (dataGridView2.Columns["ItemId"] != null)
-                    dataGridView2.Columns["ItemId"].Visible = false;
-            };
-
-            dataGridView3.DataBindingComplete += (s, ev) =>
-            {
-                // В Orders скрываем служебные ID — оставляем навигационные свойства (Customer, Item),
-                // т.к. они корректно отображают информацию (ToString() у Customer возвращает имя).
-                var hide = new[] { "OrderId", "CustomerId", "ItemId" };
-                foreach (var name in hide)
-                {
-                    if (dataGridView3.Columns[name] != null)
-                        dataGridView3.Columns[name].Visible = false;
-                }
-            };
+                dataGridView2.Columns["Orders"].Visible = false;
+            }
+            if (dataGridView3.Columns.Contains("CustomerId")) 
+            { 
+                dataGridView3.Columns["CustomerId"].Visible = false; 
+            }
+            if (dataGridView3.Columns.Contains("ItemId")) 
+            { 
+                dataGridView3.Columns["ItemId"].Visible = false; 
+            }
         }
         catch (Exception ex)
         {

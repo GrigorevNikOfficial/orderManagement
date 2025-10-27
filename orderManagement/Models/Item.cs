@@ -16,4 +16,9 @@ public class Item
         Orders = new List<Order>();
     }
     
+    public override string ToString()
+    { 
+        return Description;
+    }
+    
 }
