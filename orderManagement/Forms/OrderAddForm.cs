@@ -63,7 +63,7 @@ public partial class OrderAddForm : Form
             ItemId = item.ItemId,
             Item = item,
             Quantity = quantity,
-            OrderDate = dateTimePickerOrderDate.Value.Date
+            OrderDate = DateTime.SpecifyKind(dateTimePickerOrderDate.Value.Date, DateTimeKind.Utc)
         };
 
         try
@@ -75,7 +75,7 @@ public partial class OrderAddForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Ошибка при сохранении: {ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show($"Ошибка при сохранении: {ex.GetBaseException().Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 

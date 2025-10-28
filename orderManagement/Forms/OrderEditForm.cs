@@ -33,7 +33,9 @@ public partial class OrderEditForm : Form
         comboBoxItem.SelectedItem = items.FirstOrDefault(i => i.ItemId == order.ItemId);
 
         numericQuantity.Value = Math.Min(numericQuantity.Maximum, Math.Max(numericQuantity.Minimum, order.Quantity));
-        dateTimePickerOrderDate.Value = order.OrderDate;
+        dateTimePickerOrderDate.Value = order.OrderDate.Kind == DateTimeKind.Unspecified
+            ? order.OrderDate
+            : order.OrderDate.ToLocalTime();
     }
 
     private void buttonSave_Click(object? sender, EventArgs e)
@@ -62,7 +64,7 @@ public partial class OrderEditForm : Form
         order.ItemId = item.ItemId;
         order.Item = item;
         order.Quantity = quantity;
-        order.OrderDate = dateTimePickerOrderDate.Value.Date;
+    order.OrderDate = DateTime.SpecifyKind(dateTimePickerOrderDate.Value.Date, DateTimeKind.Utc);
 
         try
         {
@@ -72,7 +74,7 @@ public partial class OrderEditForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Ошибка при сохранении: {ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show($"Ошибка при сохранении: {ex.GetBaseException().Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 

@@ -430,7 +430,7 @@ public partial class MainForm : Form
         var filtered = dbContext.Orders.Local.Where(order =>
             (selectedCustomer == null || order.CustomerId == selectedCustomer.CustomerId) &&
             (selectedItem == null || order.ItemId == selectedItem.ItemId) &&
-            (!useDate || DateOnly.FromDateTime(order.OrderDate.Date) == selectedDate) &&
+            (!useDate || DateOnly.FromDateTime(order.OrderDate.ToLocalTime().Date) == selectedDate) &&
             (!HasLowerBound(minQuantity) || order.Quantity >= minQuantity) &&
             (!HasUpperBound(maxQuantity) || order.Quantity <= maxQuantity)
         ).ToList();
