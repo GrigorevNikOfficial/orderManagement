@@ -1,6 +1,4 @@
-﻿using System.Collections.Generic;
-
-namespace orderManagement.Models;
+﻿namespace orderManagement.Models;
 
 public class Item
 {
@@ -10,15 +8,9 @@ public class Item
     public string Description { get; set; } = string.Empty;
 
     public virtual ICollection<Order> Orders { get; set; } = new List<Order>();
-
-    public Item()
-    {
-        Orders = new List<Order>();
-    }
     
     public override string ToString()
     { 
         return Description;
     }
-    
 }

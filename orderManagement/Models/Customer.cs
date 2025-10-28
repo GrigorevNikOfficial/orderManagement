@@ -10,14 +10,8 @@ public class Customer
 
     public virtual ICollection<Order> Orders { get; set; } = new List<Order>();
 
-    public Customer()
-    {
-        Orders = new List<Order>();
-    }
-
     public override string ToString()
     {
         return Name;
-    }
-    
+    } 
 }
