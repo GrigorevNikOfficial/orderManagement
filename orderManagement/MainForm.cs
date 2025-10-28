@@ -22,7 +22,7 @@ public partial class MainForm : Form
         this.FormClosing += MainForm_FormClosing;
     }
 
-    private void MainForm_Load(object sender, EventArgs e)
+    private void MainForm_Load(object? sender, EventArgs e)
     {
         // Простая привязка: читаем данные из контекста и передаем списки в качестве источников данных.
         // Можно заменить на .Local.ToBindingList() при необходимости двусторонней привязки.
@@ -66,7 +66,7 @@ public partial class MainForm : Form
         }
     }
 
-    private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
+    private void MainForm_FormClosing(object? sender, FormClosingEventArgs e)
     {
         this.dbContext?.Dispose();
         this.dbContext = null!;
