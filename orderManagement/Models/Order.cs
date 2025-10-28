@@ -10,4 +10,6 @@ public class Order
 
     public virtual Customer Customer { get; set; } = null!;
     public virtual Item Item { get; set; } = null!;
+
+    public int TotalCost => (Item?.Price ?? 0) * Quantity;
 }
