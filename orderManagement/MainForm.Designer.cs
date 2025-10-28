@@ -39,30 +39,30 @@ partial class MainForm
         // 
         // dataGridView1
         // 
-        dataGridView1.Location = new System.Drawing.Point(27, 29);
+        dataGridView1.Location = new System.Drawing.Point(27, 66);
         dataGridView1.Name = "dataGridView1";
-        dataGridView1.Size = new System.Drawing.Size(402, 184);
+        dataGridView1.Size = new System.Drawing.Size(569, 184);
         dataGridView1.TabIndex = 0;
         // 
         // dataGridView2
         // 
-        dataGridView2.Location = new System.Drawing.Point(27, 219);
+        dataGridView2.Location = new System.Drawing.Point(27, 340);
         dataGridView2.Name = "dataGridView2";
-        dataGridView2.Size = new System.Drawing.Size(402, 184);
+        dataGridView2.Size = new System.Drawing.Size(569, 184);
         dataGridView2.TabIndex = 1;
         // 
         // dataGridView3
         // 
-        dataGridView3.Location = new System.Drawing.Point(27, 409);
+        dataGridView3.Location = new System.Drawing.Point(27, 636);
         dataGridView3.Name = "dataGridView3";
-        dataGridView3.Size = new System.Drawing.Size(402, 184);
+        dataGridView3.Size = new System.Drawing.Size(569, 184);
         dataGridView3.TabIndex = 2;
         // 
         // MainForm
         // 
         AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
         AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-        ClientSize = new System.Drawing.Size(800, 620);
+        ClientSize = new System.Drawing.Size(802, 874);
         Controls.Add(dataGridView3);
         Controls.Add(dataGridView2);
         Controls.Add(dataGridView1);
