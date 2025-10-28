@@ -6,6 +6,8 @@ using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Text;
 using System.Windows.Forms;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
@@ -20,6 +22,7 @@ namespace orderManagement;
 
 public partial class MainForm : Form
 {
+    private static readonly CultureInfo ReportCulture = CultureInfo.GetCultureInfo("ru-RU");
     private readonly OrderManagementContext dbContext;
     private bool customerFilterActive;
     private bool itemFilterActive;
@@ -584,6 +587,89 @@ public partial class MainForm : Form
         }
     }
 
+    private void buttonOrderExportHtmlDetailed_Click(object? sender, EventArgs e)
+    {
+        try
+        {
+            var orders = dbContext.Orders
+                .Include(o => o.Customer)
+                .Include(o => o.Item)
+                .OrderBy(o => o.OrderDate)
+                .ThenBy(o => o.Customer.Name)
+                .ToList();
+
+            if (orders.Count == 0)
+            {
+                MessageBox.Show("Нет данных для экспорта.", "Экспорт HTML", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            using var dialog = new SaveFileDialog
+            {
+                Filter = "HTML файлы (*.html)|*.html",
+                Title = "Сохранение подробного HTML отчета",
+                FileName = $"Orders_{DateTime.Now:yyyyMMdd_HHmm}.html"
+            };
+
+            if (dialog.ShowDialog(this) != DialogResult.OK)
+            {
+                return;
+            }
+
+            var htmlContent = BuildOrdersDetailedHtml(orders);
+            File.WriteAllText(dialog.FileName, htmlContent, Encoding.UTF8);
+
+            MessageBox.Show($"Файл сохранен: {dialog.FileName}", "Экспорт завершен", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            OpenFile(dialog.FileName);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Ошибка при формировании HTML отчета: {ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void buttonOrderExportHtmlByCustomer_Click(object? sender, EventArgs e)
+    {
+        try
+        {
+            var customers = dbContext.Customers
+                .Include(c => c.Orders)
+                .ThenInclude(o => o.Item)
+                .OrderBy(c => c.Name)
+                .ToList();
+
+            var customersWithOrders = customers.Where(c => c.Orders.Any()).ToList();
+
+            if (customersWithOrders.Count == 0)
+            {
+                MessageBox.Show("Нет заказов для формирования отчета.", "Экспорт HTML", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            using var dialog = new SaveFileDialog
+            {
+                Filter = "HTML файлы (*.html)|*.html",
+                Title = "Сохранение HTML отчета по клиентам",
+                FileName = $"OrdersByCustomer_{DateTime.Now:yyyyMMdd_HHmm}.html"
+            };
+
+            if (dialog.ShowDialog(this) != DialogResult.OK)
+            {
+                return;
+            }
+
+            var htmlContent = BuildOrdersByCustomerHtml(customersWithOrders);
+            File.WriteAllText(dialog.FileName, htmlContent, Encoding.UTF8);
+
+            MessageBox.Show($"Файл сохранен: {dialog.FileName}", "Экспорт завершен", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            OpenFile(dialog.FileName);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Ошибка при формировании HTML отчета: {ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
     private void buttonOrderImportExcel_Click(object? sender, EventArgs e)
     {
         using var dialog = new OpenFileDialog
@@ -666,13 +752,13 @@ public partial class MainForm : Form
         {
             var row = new Spreadsheet.Row();
             row.Append(
-                CreateTextCell(order.Customer.Name),
-                CreateTextCell(order.Customer.ContactPerson),
-                CreateTextCell(order.Customer.Phone),
-                CreateTextCell(order.Customer.Address),
-                CreateTextCell(order.Item.Description),
+                CreateTextCell(order.Customer.Name, styles.TextStyleIndex),
+                CreateTextCell(order.Customer.ContactPerson, styles.TextStyleIndex),
+                CreateTextCell(order.Customer.Phone, styles.TextStyleIndex),
+                CreateTextCell(order.Customer.Address, styles.TextStyleIndex),
+                CreateTextCell(order.Item.Description, styles.TextStyleIndex),
                 CreateNumberCell(order.Item.Price, styles.CurrencyStyleIndex),
-                CreateTextCell(order.Item.Delivery ? "TRUE" : "FALSE"),
+                CreateTextCell(order.Item.Delivery ? "TRUE" : "FALSE", styles.TextStyleIndex),
                 CreateNumberCell(order.Quantity, styles.NumberStyleIndex),
                 CreateDateCell(order.OrderDate.ToLocalTime(), styles.DateStyleIndex));
             sheetData.Append(row);
@@ -680,6 +766,179 @@ public partial class MainForm : Form
 
         workbookPart.Workbook.Save();
         return filePath;
+    }
+
+    private static string BuildOrdersDetailedHtml(IReadOnlyCollection<Order> orders)
+    {
+        var totalQuantity = orders.Sum(o => o.Quantity);
+        var totalAmount = orders.Sum(o => o.TotalCost);
+
+        var sb = new StringBuilder();
+        AppendHtmlProlog(sb, "Список заказов");
+        sb.AppendLine($"<p>Дата формирования: {DateTime.Now.ToString("dd.MM.yyyy HH:mm", ReportCulture)}</p>");
+        sb.AppendLine("<table>");
+        sb.AppendLine("<thead>");
+        sb.AppendLine("<tr>");
+        sb.AppendLine("<th>ID</th>");
+        sb.AppendLine("<th>Дата</th>");
+        sb.AppendLine("<th>Клиент</th>");
+        sb.AppendLine("<th>Контактное лицо</th>");
+        sb.AppendLine("<th>Телефон</th>");
+        sb.AppendLine("<th>Адрес</th>");
+        sb.AppendLine("<th>Товар</th>");
+        sb.AppendLine("<th>Количество</th>");
+        sb.AppendLine("<th>Доставка</th>");
+        sb.AppendLine("<th>Цена</th>");
+        sb.AppendLine("<th>Сумма</th>");
+        sb.AppendLine("</tr>");
+        sb.AppendLine("</thead>");
+        sb.AppendLine("<tbody>");
+
+        foreach (var order in orders)
+        {
+            sb.AppendLine("<tr>");
+            sb.AppendLine($"<td>{order.OrderId}</td>");
+            sb.AppendLine($"<td>{FormatDateTime(order.OrderDate)}</td>");
+            sb.AppendLine($"<td>{HtmlEncode(order.Customer.Name)}</td>");
+            sb.AppendLine($"<td>{HtmlEncode(order.Customer.ContactPerson)}</td>");
+            sb.AppendLine($"<td>{HtmlEncode(order.Customer.Phone)}</td>");
+            sb.AppendLine($"<td>{HtmlEncode(order.Customer.Address)}</td>");
+            sb.AppendLine($"<td>{HtmlEncode(order.Item.Description)}</td>");
+            sb.AppendLine($"<td>{FormatNumber(order.Quantity)}</td>");
+            sb.AppendLine($"<td>{(order.Item.Delivery ? "Да" : "Нет")}</td>");
+            sb.AppendLine($"<td>{FormatNumber(order.Item.Price)} руб.</td>");
+            sb.AppendLine($"<td>{FormatNumber(order.TotalCost)} руб.</td>");
+            sb.AppendLine("</tr>");
+        }
+
+        sb.AppendLine("</tbody>");
+        sb.AppendLine("</table>");
+        sb.AppendLine($"<p class=\"summary\">Всего заказов: {orders.Count}</p>");
+        sb.AppendLine($"<p class=\"summary\">Общий объем: {FormatNumber(totalQuantity)} шт.</p>");
+        sb.AppendLine($"<p class=\"summary\">Общая стоимость: {FormatNumber(totalAmount)} руб.</p>");
+        AppendHtmlEpilog(sb);
+
+        return sb.ToString();
+    }
+
+    private static string BuildOrdersByCustomerHtml(IEnumerable<Customer> customers)
+    {
+        var grouped = customers
+            .Select(customer => new
+            {
+                Customer = customer,
+                Orders = customer.Orders
+                    .OrderBy(o => o.OrderDate)
+                    .ThenBy(o => o.Item.Description)
+                    .ToList()
+            })
+            .Where(group => group.Orders.Count > 0)
+            .ToList();
+
+        var totalCustomers = grouped.Count;
+        var totalOrders = grouped.Sum(g => g.Orders.Count);
+        var totalQuantity = grouped.Sum(g => g.Orders.Sum(o => o.Quantity));
+        var totalAmount = grouped.Sum(g => g.Orders.Sum(o => o.TotalCost));
+
+        var sb = new StringBuilder();
+        AppendHtmlProlog(sb, "Заказы по клиентам");
+        sb.AppendLine($"<p>Дата формирования: {DateTime.Now.ToString("dd.MM.yyyy HH:mm", ReportCulture)}</p>");
+
+        foreach (var group in grouped)
+        {
+            var customer = group.Customer;
+            var orders = group.Orders;
+            var customerQuantity = orders.Sum(o => o.Quantity);
+            var customerAmount = orders.Sum(o => o.TotalCost);
+
+            sb.AppendLine("<section class=\"customer\">");
+            sb.AppendLine($"<h2>{HtmlEncode(customer.Name)}</h2>");
+            sb.AppendLine("<div class=\"customer-info\">");
+            sb.AppendLine($"<p><strong>Контактное лицо:</strong> {HtmlEncode(customer.ContactPerson)}</p>");
+            sb.AppendLine($"<p><strong>Телефон:</strong> {HtmlEncode(customer.Phone)}</p>");
+            sb.AppendLine($"<p><strong>Адрес:</strong> {HtmlEncode(customer.Address)}</p>");
+            sb.AppendLine("</div>");
+            sb.AppendLine("<table>");
+            sb.AppendLine("<thead>");
+            sb.AppendLine("<tr><th>Дата</th><th>Товар</th><th>Количество</th><th>Цена</th><th>Сумма</th></tr>");
+            sb.AppendLine("</thead>");
+            sb.AppendLine("<tbody>");
+
+            foreach (var order in orders)
+            {
+                sb.AppendLine("<tr>");
+                sb.AppendLine($"<td>{FormatDate(order.OrderDate)}</td>");
+                sb.AppendLine($"<td>{HtmlEncode(order.Item.Description)}</td>");
+                sb.AppendLine($"<td>{FormatNumber(order.Quantity)}</td>");
+                sb.AppendLine($"<td>{FormatNumber(order.Item.Price)} руб.</td>");
+                sb.AppendLine($"<td>{FormatNumber(order.TotalCost)} руб.</td>");
+                sb.AppendLine("</tr>");
+            }
+
+            sb.AppendLine("</tbody>");
+            sb.AppendLine("</table>");
+            sb.AppendLine($"<p class=\"summary\">Всего заказов: {orders.Count}, товаров: {FormatNumber(customerQuantity)} шт., сумма: {FormatNumber(customerAmount)} руб.</p>");
+            sb.AppendLine("</section>");
+        }
+
+        sb.AppendLine("<hr />");
+        sb.AppendLine($"<p class=\"summary\">Клиентов с заказами: {totalCustomers}</p>");
+        sb.AppendLine($"<p class=\"summary\">Всего заказов: {totalOrders}</p>");
+        sb.AppendLine($"<p class=\"summary\">Всего товаров: {FormatNumber(totalQuantity)} шт.</p>");
+        sb.AppendLine($"<p class=\"summary\">Общая сумма: {FormatNumber(totalAmount)} руб.</p>");
+        AppendHtmlEpilog(sb);
+
+        return sb.ToString();
+    }
+
+    private static void AppendHtmlProlog(StringBuilder sb, string title)
+    {
+        sb.AppendLine("<!DOCTYPE html>");
+        sb.AppendLine("<html lang=\"ru\">");
+        sb.AppendLine("<head>");
+        sb.AppendLine("<meta charset=\"utf-8\" />");
+        sb.AppendLine($"<title>{HtmlEncode(title)}</title>");
+        sb.AppendLine("<style>");
+        sb.AppendLine("body { font-family: Arial, sans-serif; margin: 32px; background-color: #f7f9fb; color: #1f2933; }");
+        sb.AppendLine("h1 { margin-bottom: 16px; }");
+        sb.AppendLine("h2 { margin-top: 32px; }");
+        sb.AppendLine("table { border-collapse: collapse; width: 100%; margin-bottom: 16px; }");
+        sb.AppendLine("th, td { border: 1px solid #cbd5e1; padding: 8px 12px; text-align: left; }");
+        sb.AppendLine("th { background-color: #d9e8fc; }");
+        sb.AppendLine("tbody tr:nth-child(even) { background-color: #eef2f7; }");
+        sb.AppendLine(".summary { font-weight: bold; }");
+        sb.AppendLine(".customer-info { margin-bottom: 12px; }");
+        sb.AppendLine("section.customer { margin-bottom: 32px; }");
+        sb.AppendLine("</style>");
+        sb.AppendLine("</head>");
+        sb.AppendLine("<body>");
+        sb.AppendLine($"<h1>{HtmlEncode(title)}</h1>");
+    }
+
+    private static void AppendHtmlEpilog(StringBuilder sb)
+    {
+        sb.AppendLine("</body>");
+        sb.AppendLine("</html>");
+    }
+
+    private static string HtmlEncode(string? value)
+    {
+        return WebUtility.HtmlEncode(value ?? string.Empty);
+    }
+
+    private static string FormatNumber(int value)
+    {
+        return value.ToString("N0", ReportCulture);
+    }
+
+    private static string FormatDate(DateTime value)
+    {
+        return value.ToLocalTime().ToString("dd.MM.yyyy", ReportCulture);
+    }
+
+    private static string FormatDateTime(DateTime value)
+    {
+        return value.ToLocalTime().ToString("dd.MM.yyyy HH:mm", ReportCulture);
     }
 
     private string ImportDataFromExcel(string filePath)
@@ -861,7 +1120,7 @@ public partial class MainForm : Form
         return $"Импорт завершен.\nКлиенты: добавлено {addedCustomers}.\nТовары: добавлено {addedItems}.\nЗаказы: добавлено {addedOrders}.\nПропущено заказов (дубликаты/ошибки): {skippedOrders}.\nПропущено строк из-за отсутствующих данных: {skippedOrdersMissingData}.";
     }
 
-    private (uint HeaderStyleIndex, uint CurrencyStyleIndex, uint DateStyleIndex, uint NumberStyleIndex) CreateStylesheet(SpreadsheetDocument document)
+    private ExcelStyles CreateStylesheet(SpreadsheetDocument document)
     {
         var stylesPart = document.WorkbookPart!.AddNewPart<WorkbookStylesPart>();
 
@@ -869,24 +1128,44 @@ public partial class MainForm : Form
             new Spreadsheet.Font(),
             new Spreadsheet.Font(new Spreadsheet.Bold()));
 
+        var headerFill = new Spreadsheet.PatternFill
+        {
+            PatternType = Spreadsheet.PatternValues.Solid,
+            ForegroundColor = new Spreadsheet.ForegroundColor { Rgb = new HexBinaryValue { Value = "FFDDEBF7" } },
+            BackgroundColor = new Spreadsheet.BackgroundColor { Indexed = 64U }
+        };
+
         var fills = new Spreadsheet.Fills(
             new Spreadsheet.Fill(new Spreadsheet.PatternFill { PatternType = Spreadsheet.PatternValues.None }),
-            new Spreadsheet.Fill(new Spreadsheet.PatternFill { PatternType = Spreadsheet.PatternValues.Gray125 }));
+            new Spreadsheet.Fill(new Spreadsheet.PatternFill { PatternType = Spreadsheet.PatternValues.Gray125 }),
+            new Spreadsheet.Fill(headerFill));
 
-        var borders = new Spreadsheet.Borders(new Spreadsheet.Border());
+        var bordered = new Spreadsheet.Border(
+            new Spreadsheet.LeftBorder { Style = Spreadsheet.BorderStyleValues.Thin },
+            new Spreadsheet.RightBorder { Style = Spreadsheet.BorderStyleValues.Thin },
+            new Spreadsheet.TopBorder { Style = Spreadsheet.BorderStyleValues.Thin },
+            new Spreadsheet.BottomBorder { Style = Spreadsheet.BorderStyleValues.Thin },
+            new Spreadsheet.DiagonalBorder());
+
+        var borders = new Spreadsheet.Borders(
+            new Spreadsheet.Border(),
+            bordered);
 
         var cellFormats = new Spreadsheet.CellFormats(
             new Spreadsheet.CellFormat(),
-            new Spreadsheet.CellFormat { FontId = 1, ApplyFont = true },
-            new Spreadsheet.CellFormat { NumberFormatId = 4, ApplyNumberFormat = true },
-            new Spreadsheet.CellFormat { NumberFormatId = 14, ApplyNumberFormat = true },
-            new Spreadsheet.CellFormat { NumberFormatId = 1, ApplyNumberFormat = true });
+            new Spreadsheet.CellFormat { FontId = 1, FillId = 2, BorderId = 1, ApplyFont = true, ApplyFill = true, ApplyBorder = true },
+            new Spreadsheet.CellFormat { BorderId = 1, ApplyBorder = true },
+            new Spreadsheet.CellFormat { NumberFormatId = 4, BorderId = 1, ApplyNumberFormat = true, ApplyBorder = true },
+            new Spreadsheet.CellFormat { NumberFormatId = 14, BorderId = 1, ApplyNumberFormat = true, ApplyBorder = true },
+            new Spreadsheet.CellFormat { NumberFormatId = 1, BorderId = 1, ApplyNumberFormat = true, ApplyBorder = true });
 
         stylesPart.Stylesheet = new Spreadsheet.Stylesheet(fonts, fills, borders, cellFormats);
         stylesPart.Stylesheet.Save();
 
-        return (1u, 2u, 3u, 4u);
+        return new ExcelStyles(1u, 2u, 3u, 4u, 5u);
     }
+
+    private readonly record struct ExcelStyles(uint HeaderStyleIndex, uint TextStyleIndex, uint CurrencyStyleIndex, uint DateStyleIndex, uint NumberStyleIndex);
 
     private static Spreadsheet.Row CreateHeaderRow(uint headerStyleIndex, params string[] headers)
     {

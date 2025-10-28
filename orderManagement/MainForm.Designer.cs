@@ -74,7 +74,9 @@ partial class MainForm
         itemPriceColumn = new System.Windows.Forms.DataGridViewTextBoxColumn();
         itemDeliveryColumn = new System.Windows.Forms.DataGridViewCheckBoxColumn();
         tabPageOrders = new System.Windows.Forms.TabPage();
-    buttonOrderExportExcelByDate = new System.Windows.Forms.Button();
+        buttonOrderExportHtmlByCustomer = new System.Windows.Forms.Button();
+        buttonOrderExportHtmlDetailed = new System.Windows.Forms.Button();
+        buttonOrderExportExcelByDate = new System.Windows.Forms.Button();
         buttonOrderImportExcel = new System.Windows.Forms.Button();
         buttonOrderExportExcel = new System.Windows.Forms.Button();
         buttonOrderGenerateReport = new System.Windows.Forms.Button();
@@ -537,9 +539,11 @@ partial class MainForm
         // 
         // tabPageOrders
         // 
-    tabPageOrders.Controls.Add(buttonOrderExportExcelByDate);
-    tabPageOrders.Controls.Add(buttonOrderImportExcel);
-    tabPageOrders.Controls.Add(buttonOrderExportExcel);
+        tabPageOrders.Controls.Add(buttonOrderExportHtmlByCustomer);
+        tabPageOrders.Controls.Add(buttonOrderExportHtmlDetailed);
+        tabPageOrders.Controls.Add(buttonOrderExportExcelByDate);
+        tabPageOrders.Controls.Add(buttonOrderImportExcel);
+        tabPageOrders.Controls.Add(buttonOrderExportExcel);
         tabPageOrders.Controls.Add(buttonOrderGenerateReport);
         tabPageOrders.Controls.Add(buttonOrderGenerateInvoice);
         tabPageOrders.Controls.Add(buttonOrderClearFilter);
@@ -578,14 +582,34 @@ partial class MainForm
         // 
     // buttonOrderExportExcelByDate
     // 
-    buttonOrderExportExcelByDate.Location = new System.Drawing.Point(822, 404);
-    buttonOrderExportExcelByDate.Name = "buttonOrderExportExcelByDate";
-    buttonOrderExportExcelByDate.Size = new System.Drawing.Size(195, 32);
-    buttonOrderExportExcelByDate.TabIndex = 19;
-    buttonOrderExportExcelByDate.Text = "Экспорт по дате";
-    buttonOrderExportExcelByDate.UseVisualStyleBackColor = true;
-    buttonOrderExportExcelByDate.Click += buttonOrderExportExcelByDate_Click;
-    // 
+            buttonOrderExportExcelByDate.Location = new System.Drawing.Point(822, 404);
+            buttonOrderExportExcelByDate.Name = "buttonOrderExportExcelByDate";
+            buttonOrderExportExcelByDate.Size = new System.Drawing.Size(195, 32);
+            buttonOrderExportExcelByDate.TabIndex = 19;
+            buttonOrderExportExcelByDate.Text = "Экспорт по дате";
+            buttonOrderExportExcelByDate.UseVisualStyleBackColor = true;
+            buttonOrderExportExcelByDate.Click += buttonOrderExportExcelByDate_Click;
+            // 
+            // buttonOrderExportHtmlDetailed
+            // 
+            buttonOrderExportHtmlDetailed.Location = new System.Drawing.Point(420, 442);
+            buttonOrderExportHtmlDetailed.Name = "buttonOrderExportHtmlDetailed";
+            buttonOrderExportHtmlDetailed.Size = new System.Drawing.Size(195, 32);
+            buttonOrderExportHtmlDetailed.TabIndex = 20;
+            buttonOrderExportHtmlDetailed.Text = "HTML отчёт (подробно)";
+            buttonOrderExportHtmlDetailed.UseVisualStyleBackColor = true;
+            buttonOrderExportHtmlDetailed.Click += buttonOrderExportHtmlDetailed_Click;
+            // 
+            // buttonOrderExportHtmlByCustomer
+            // 
+            buttonOrderExportHtmlByCustomer.Location = new System.Drawing.Point(621, 442);
+            buttonOrderExportHtmlByCustomer.Name = "buttonOrderExportHtmlByCustomer";
+            buttonOrderExportHtmlByCustomer.Size = new System.Drawing.Size(195, 32);
+            buttonOrderExportHtmlByCustomer.TabIndex = 21;
+            buttonOrderExportHtmlByCustomer.Text = "HTML по клиентам";
+            buttonOrderExportHtmlByCustomer.UseVisualStyleBackColor = true;
+            buttonOrderExportHtmlByCustomer.Click += buttonOrderExportHtmlByCustomer_Click;
+            // 
         // buttonOrderExportExcel
         // 
         buttonOrderExportExcel.Location = new System.Drawing.Point(420, 404);
@@ -899,6 +923,8 @@ partial class MainForm
     private System.Windows.Forms.Button buttonOrderExportExcel;
     private System.Windows.Forms.Button buttonOrderImportExcel;
     private System.Windows.Forms.Button buttonOrderExportExcelByDate;
+    private System.Windows.Forms.Button buttonOrderExportHtmlDetailed;
+    private System.Windows.Forms.Button buttonOrderExportHtmlByCustomer;
     private System.Windows.Forms.Button buttonOrderClearFilter;
     private System.Windows.Forms.Button buttonOrderApplyFilter;
     private System.Windows.Forms.NumericUpDown numericOrderQuantityMax;
