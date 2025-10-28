@@ -3,16 +3,15 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Globalization;
 using System.Windows.Forms;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using Microsoft.EntityFrameworkCore;
-using System.Runtime.InteropServices;
-using Excel = Microsoft.Office.Interop.Excel;
+using Spreadsheet = DocumentFormat.OpenXml.Spreadsheet;
 using orderManagement.Data;
 using orderManagement.Forms;
 using orderManagement.Models;
@@ -25,12 +24,6 @@ public partial class MainForm : Form
     private bool customerFilterActive;
     private bool itemFilterActive;
     private bool orderFilterActive;
-    private Excel.Application? excelApp;
-    private Excel.Window? excelWindow;
-    private Excel.Workbook? excelWorkbook;
-    private Excel.Sheets? excelSheets;
-    private Excel.Worksheet? excelWorksheet;
-    private Excel.Range? excelRange;
 
     public MainForm()
     {
@@ -527,40 +520,28 @@ public partial class MainForm : Form
 
     private void buttonOrderExportExcel_Click(object? sender, EventArgs e)
     {
-        var orders = dbContext.Orders
-            .Include(o => o.Customer)
-            .Include(o => o.Item)
-            .OrderBy(o => o.Customer.Name)
-            .ThenBy(o => o.OrderDate)
-            .ToList();
-
-        if (orders.Count == 0)
-        {
-            MessageBox.Show("Нет данных для экспорта.", "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-
-        string? savedPath = null;
-
         try
         {
-            OpenExcelDocument();
-            BuildOrdersExcelReport(orders);
-            savedPath = SaveExcelWorkbook();
+            var orders = dbContext.Orders
+                .Include(o => o.Customer)
+                .Include(o => o.Item)
+                .OrderBy(o => o.OrderDate)
+                .ThenBy(o => o.Customer.Name)
+                .ToList();
+
+            if (orders.Count == 0)
+            {
+                MessageBox.Show("Нет данных для экспорта.", "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var filePath = CreateOrdersExcelReport(orders);
+            MessageBox.Show($"Файл сохранен: {filePath}", "Экспорт завершен", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            OpenFile(filePath);
         }
         catch (Exception ex)
         {
             MessageBox.Show($"Ошибка при экспорте: {ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
-        finally
-        {
-            ReleaseExcelResources();
-        }
-
-        if (!string.IsNullOrWhiteSpace(savedPath))
-        {
-            MessageBox.Show($"Файл сохранен: {savedPath}", "Экспорт завершен", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            OpenFile(savedPath);
         }
     }
 
@@ -577,435 +558,468 @@ public partial class MainForm : Form
             return;
         }
 
-        Excel.Application? importApp = null;
-        Excel.Workbook? importWorkbook = null;
-        Excel.Worksheet? importWorksheet = null;
-        Excel.Range? usedRange = null;
-        string? summary = null;
-
         try
         {
-            importApp = new Excel.Application();
-            importWorkbook = importApp.Workbooks.Open(dialog.FileName);
-            importWorksheet = (Excel.Worksheet)importWorkbook.Worksheets[1];
-            usedRange = importWorksheet.UsedRange;
-
-            var rowCount = usedRange.Rows.Count;
-            if (rowCount < 4)
-            {
-                MessageBox.Show("Файл не содержит данных для импорта.", "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
-            var addedCustomers = 0;
-            var addedItems = 0;
-            var addedOrders = 0;
-            var skippedOrders = 0;
-            var skippedOrdersMissingData = 0;
-
-            for (var row = 4; row <= rowCount; row++)
-            {
-                GetRangeValue(usedRange, row, 1, out var customerName);
-                if (string.IsNullOrWhiteSpace(customerName))
-                {
-                    continue;
-                }
-
-                if (string.Equals(customerName, "Итого", StringComparison.InvariantCultureIgnoreCase))
-                {
-                    continue;
-                }
-
-                GetRangeValue(usedRange, row, 2, out var contactPerson);
-                GetRangeValue(usedRange, row, 3, out var phone);
-                GetRangeValue(usedRange, row, 4, out var address);
-                GetRangeValue(usedRange, row, 5, out var itemDescription);
-                GetRangeValue(usedRange, row, 6, out var priceText);
-                GetRangeValue(usedRange, row, 7, out var deliveryText);
-                GetRangeValue(usedRange, row, 8, out var quantityText);
-                var dateRaw = GetRangeValue(usedRange, row, 9, out var dateText);
-
-                if (string.IsNullOrWhiteSpace(itemDescription) || string.IsNullOrWhiteSpace(quantityText))
-                {
-                    skippedOrdersMissingData++;
-                    continue;
-                }
-
-                if (!TryParseIntValue(quantityText, out var quantity) || quantity <= 0)
-                {
-                    skippedOrders++;
-                    continue;
-                }
-
-                if (string.IsNullOrWhiteSpace(dateText))
-                {
-                    skippedOrdersMissingData++;
-                    continue;
-                }
-
-                var orderDate = ConvertExcelDate(dateRaw ?? (object?)dateText);
-                if (orderDate == null)
-                {
-                    skippedOrders++;
-                    continue;
-                }
-
-                var customer = dbContext.Customers.Local.FirstOrDefault(c => string.Equals(c.Name, customerName, StringComparison.InvariantCultureIgnoreCase));
-                if (customer == null)
-                {
-                    customer = new Customer
-                    {
-                        Name = customerName,
-                        ContactPerson = contactPerson,
-                        Phone = phone,
-                        Address = address
-                    };
-                    dbContext.Customers.Add(customer);
-                    addedCustomers++;
-                }
-                else
-                {
-                    if (!string.IsNullOrWhiteSpace(contactPerson) && string.IsNullOrWhiteSpace(customer.ContactPerson))
-                    {
-                        customer.ContactPerson = contactPerson;
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(phone) && string.IsNullOrWhiteSpace(customer.Phone))
-                    {
-                        customer.Phone = phone;
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(address) && string.IsNullOrWhiteSpace(customer.Address))
-                    {
-                        customer.Address = address;
-                    }
-                }
-
-                var item = dbContext.Items.Local.FirstOrDefault(i => string.Equals(i.Description, itemDescription, StringComparison.InvariantCultureIgnoreCase));
-                if (item == null)
-                {
-                    if (string.IsNullOrWhiteSpace(priceText) || !TryParseIntValue(priceText, out var price) || price < 0)
-                    {
-                        skippedOrdersMissingData++;
-                        continue;
-                    }
-
-                    var delivery = ParseExcelBoolean(deliveryText);
-                    item = new Item
-                    {
-                        Description = itemDescription,
-                        Price = price,
-                        Delivery = delivery
-                    };
-                    dbContext.Items.Add(item);
-                    addedItems++;
-                }
-                else
-                {
-                    if (!string.IsNullOrWhiteSpace(priceText) && TryParseIntValue(priceText, out var parsedPrice) && parsedPrice >= 0)
-                    {
-                        item.Price = parsedPrice;
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(deliveryText))
-                    {
-                        item.Delivery = ParseExcelBoolean(deliveryText);
-                    }
-                }
-
-                var normalizedDate = DateTime.SpecifyKind(orderDate.Value.Date, DateTimeKind.Utc);
-
-                var duplicateOrder = dbContext.Orders.Local.FirstOrDefault(o =>
-                    string.Equals(o.Customer.Name, customer.Name, StringComparison.InvariantCultureIgnoreCase) &&
-                    string.Equals(o.Item.Description, item.Description, StringComparison.InvariantCultureIgnoreCase) &&
-                    o.OrderDate.Date == normalizedDate.Date &&
-                    o.Quantity == quantity);
-
-                if (duplicateOrder != null)
-                {
-                    skippedOrders++;
-                    continue;
-                }
-
-                var newOrder = new Order
-                {
-                    Customer = customer,
-                    CustomerId = customer.CustomerId,
-                    Item = item,
-                    ItemId = item.ItemId,
-                    Quantity = quantity,
-                    OrderDate = normalizedDate
-                };
-
-                dbContext.Orders.Add(newOrder);
-                addedOrders++;
-            }
-
-            dbContext.SaveChanges();
+            var summary = ImportDataFromExcel(dialog.FileName);
             RefreshCustomersView();
             RefreshItemsView();
             RefreshOrdersView();
-
-            summary = $"Импорт завершен.\nКлиенты: добавлено {addedCustomers}.\nТовары: добавлено {addedItems}.\nЗаказы: добавлено {addedOrders}.\nПропущено заказов (дубликаты/ошибки): {skippedOrders}.\nПропущено строк из-за отсутствующих данных: {skippedOrdersMissingData}.";
+            MessageBox.Show(summary, "Импорт завершен", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
             MessageBox.Show($"Ошибка импорта: {ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
-        finally
-        {
-            importWorkbook?.Close(false);
-            importApp?.Quit();
-            ReleaseComObject(usedRange);
-            ReleaseComObject(importWorksheet);
-            ReleaseComObject(importWorkbook);
-            ReleaseComObject(importApp);
-        }
-
-        if (!string.IsNullOrWhiteSpace(summary))
-        {
-            MessageBox.Show(summary, "Импорт завершен", MessageBoxButtons.OK, MessageBoxIcon.Information);
-        }
     }
 
-    private void OpenExcelDocument()
+    private string CreateOrdersExcelReport(IReadOnlyCollection<Order> orders)
     {
-        excelApp = new Excel.Application
-        {
-            DisplayAlerts = false
-        };
-        excelWorkbook = excelApp.Workbooks.Add();
-        excelWindow = excelApp.ActiveWindow;
-        excelSheets = excelWorkbook.Worksheets;
-        excelWorksheet = (Excel.Worksheet)excelSheets[1];
-        excelWorksheet.Name = "Заказы";
-    }
-
-    private void BuildOrdersExcelReport(IReadOnlyCollection<Order> orders)
-    {
-        var sheet = RequireWorksheet();
-
-        ReleaseComObject(excelRange);
-        excelRange = sheet.get_Range("A1", "F1");
-        excelRange.Merge(Type.Missing);
-        excelRange.Value2 = "Отчет по заказам";
-        excelRange.Font.Bold = true;
-        excelRange.Font.Size = 16;
-        excelRange.HorizontalAlignment = Excel.XlHAlign.xlHAlignCenter;
-
-        PutCell("F2", DateTime.Now.ToString("d", CultureInfo.CurrentCulture));
-        if (excelRange != null)
-        {
-            excelRange.HorizontalAlignment = Excel.XlHAlign.xlHAlignRight;
-        }
-
-        var rowIndex = 4;
-        var groups = orders
-            .OrderBy(o => o.Customer.Name, StringComparer.InvariantCultureIgnoreCase)
-            .ThenBy(o => o.OrderDate)
-            .GroupBy(o => o.Customer.Name, StringComparer.InvariantCultureIgnoreCase);
-
-        foreach (var group in groups)
-        {
-            rowIndex = WriteCustomerOrdersGroup(group.Key, group.ToList(), rowIndex);
-        }
-
-        sheet.Columns.AutoFit();
-    }
-
-    private int WriteCustomerOrdersGroup(string customerName, List<Order> orders, int startRow)
-    {
-        var sheet = RequireWorksheet();
-
-        ReleaseComObject(excelRange);
-        excelRange = sheet.get_Range($"A{startRow}", $"F{startRow}");
-        excelRange.Merge(Type.Missing);
-        excelRange.Value2 = customerName;
-        excelRange.Font.Bold = true;
-        excelRange.Font.Italic = true;
-        excelRange.Interior.ColorIndex = 45;
-        excelRange.HorizontalAlignment = Excel.XlHAlign.xlHAlignCenter;
-        excelRange.BorderAround(Excel.XlLineStyle.xlContinuous, Excel.XlBorderWeight.xlThin, Excel.XlColorIndex.xlColorIndexAutomatic, Type.Missing);
-
-        startRow++;
-
-        WriteExcelHeaderRow(startRow);
-        startRow++;
-
-        var index = 1;
-        var totalQuantity = 0;
-        var totalCost = 0;
-
-        foreach (var order in orders.OrderBy(o => o.OrderDate).ThenBy(o => o.OrderId))
-        {
-            PutCellBorder($"A{startRow}", index.ToString(CultureInfo.InvariantCulture));
-            PutCellBorder($"B{startRow}", order.OrderDate.ToLocalTime().ToString("d", CultureInfo.CurrentCulture));
-            PutCellBorder($"C{startRow}", order.Item.Description);
-            PutCellBorder($"D{startRow}", order.Quantity.ToString(CultureInfo.InvariantCulture));
-            PutCellBorder($"E{startRow}", order.Item.Price.ToString("N0", CultureInfo.CurrentCulture));
-            PutCellBorder($"F{startRow}", order.TotalCost.ToString("N0", CultureInfo.CurrentCulture));
-
-            index++;
-            totalQuantity += order.Quantity;
-            totalCost += order.TotalCost;
-            startRow++;
-        }
-
-        PutCell($"A{startRow}", $"Итого: заказов {orders.Count}, количество {totalQuantity}, сумма {totalCost.ToString("N0", CultureInfo.CurrentCulture)} руб.");
-        ReleaseComObject(excelRange);
-        excelRange = sheet.get_Range($"A{startRow}", $"F{startRow}");
-        excelRange.Merge(Type.Missing);
-        excelRange.Font.Italic = true;
-        excelRange.HorizontalAlignment = Excel.XlHAlign.xlHAlignRight;
-        excelRange.Interior.ColorIndex = 50;
-        excelRange.BorderAround(Excel.XlLineStyle.xlContinuous, Excel.XlBorderWeight.xlThin, Excel.XlColorIndex.xlColorIndexAutomatic, Type.Missing);
-
-        return startRow + 2;
-    }
-
-    private void WriteExcelHeaderRow(int rowIndex)
-    {
-        var headers = new[] { "№", "Дата", "Товар", "Количество", "Цена", "Сумма" };
-        for (var i = 0; i < headers.Length; i++)
-        {
-            var cellAddress = $"{GetColumnLetter(i + 1)}{rowIndex}";
-            PutCellBorder(cellAddress, headers[i]);
-            if (excelRange != null)
-            {
-                excelRange.Font.Bold = true;
-                excelRange.HorizontalAlignment = Excel.XlHAlign.xlHAlignCenter;
-            }
-        }
-    }
-
-    private void PutCell(string cellAddress, string value)
-    {
-        var sheet = RequireWorksheet();
-        ReleaseComObject(excelRange);
-        excelRange = sheet.get_Range(cellAddress, Type.Missing);
-        excelRange.Value2 = value ?? string.Empty;
-    }
-
-    private void PutCellBorder(string cellAddress, string value)
-    {
-        PutCell(cellAddress, value);
-        excelRange?.BorderAround(Excel.XlLineStyle.xlContinuous, Excel.XlBorderWeight.xlThin, Excel.XlColorIndex.xlColorIndexAutomatic, Type.Missing);
-    }
-
-    private Excel.Worksheet RequireWorksheet()
-    {
-        return excelWorksheet ?? throw new InvalidOperationException("Рабочий лист Excel не инициализирован.");
-    }
-
-    private string SaveExcelWorkbook()
-    {
-        if (excelWorkbook == null)
-        {
-            throw new InvalidOperationException("Рабочая книга Excel не создана.");
-        }
-
         var folderPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "orderManagementReports");
         Directory.CreateDirectory(folderPath);
-        var fileName = $"Orders_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+        var fileName = $"Orders_{DateTime.Now:yyyyMMdd_HHmm}.xlsx";
         var filePath = Path.Combine(folderPath, fileName);
-        excelWorkbook.SaveAs(filePath);
+
+        using var document = SpreadsheetDocument.Create(filePath, SpreadsheetDocumentType.Workbook);
+        var workbookPart = document.AddWorkbookPart();
+        workbookPart.Workbook = new Spreadsheet.Workbook();
+
+        var worksheetPart = workbookPart.AddNewPart<WorksheetPart>();
+        var sheetData = new Spreadsheet.SheetData();
+        var columns = new Spreadsheet.Columns(
+            new Spreadsheet.Column { Min = 1, Max = 1, Width = 28, CustomWidth = true },
+            new Spreadsheet.Column { Min = 2, Max = 2, Width = 20, CustomWidth = true },
+            new Spreadsheet.Column { Min = 3, Max = 3, Width = 18, CustomWidth = true },
+            new Spreadsheet.Column { Min = 4, Max = 4, Width = 30, CustomWidth = true },
+            new Spreadsheet.Column { Min = 5, Max = 5, Width = 28, CustomWidth = true },
+            new Spreadsheet.Column { Min = 6, Max = 6, Width = 12, CustomWidth = true },
+            new Spreadsheet.Column { Min = 7, Max = 7, Width = 12, CustomWidth = true },
+            new Spreadsheet.Column { Min = 8, Max = 8, Width = 12, CustomWidth = true },
+            new Spreadsheet.Column { Min = 9, Max = 9, Width = 16, CustomWidth = true }
+        );
+
+        worksheetPart.Worksheet = new Spreadsheet.Worksheet(columns, sheetData);
+
+        var sheets = workbookPart.Workbook.AppendChild(new Spreadsheet.Sheets());
+        var sheet = new Spreadsheet.Sheet
+        {
+            Id = workbookPart.GetIdOfPart(worksheetPart),
+            SheetId = 1,
+            Name = "Orders"
+        };
+        sheets.Append(sheet);
+
+        var styles = CreateStylesheet(document);
+
+        sheetData.Append(CreateHeaderRow(styles.HeaderStyleIndex,
+            "CustomerName",
+            "ContactPerson",
+            "Phone",
+            "Address",
+            "ItemDescription",
+            "Price",
+            "Delivery",
+            "Quantity",
+            "OrderDate"));
+
+        foreach (var order in orders)
+        {
+            var row = new Spreadsheet.Row();
+            row.Append(
+                CreateTextCell(order.Customer.Name),
+                CreateTextCell(order.Customer.ContactPerson),
+                CreateTextCell(order.Customer.Phone),
+                CreateTextCell(order.Customer.Address),
+                CreateTextCell(order.Item.Description),
+                CreateNumberCell(order.Item.Price, styles.CurrencyStyleIndex),
+                CreateTextCell(order.Item.Delivery ? "TRUE" : "FALSE"),
+                CreateNumberCell(order.Quantity, styles.NumberStyleIndex),
+                CreateDateCell(order.OrderDate.ToLocalTime(), styles.DateStyleIndex));
+            sheetData.Append(row);
+        }
+
+        workbookPart.Workbook.Save();
         return filePath;
     }
 
-    private void ReleaseExcelResources()
+    private string ImportDataFromExcel(string filePath)
     {
-        try
+        using var document = SpreadsheetDocument.Open(filePath, false);
+        var workbookPart = document.WorkbookPart ?? throw new InvalidOperationException("Некорректный файл Excel.");
+
+        var sheet = workbookPart.Workbook.Sheets?.Elements<Spreadsheet.Sheet>()
+                       .FirstOrDefault(s => string.Equals(s.Name?.Value, "Orders", StringComparison.InvariantCultureIgnoreCase))
+                   ?? workbookPart.Workbook.Sheets?.Elements<Spreadsheet.Sheet>().FirstOrDefault();
+
+        if (sheet == null)
         {
-            excelWorkbook?.Close(false);
-        }
-        catch
-        {
+            throw new InvalidOperationException("В книге отсутствуют листы.");
         }
 
-        try
+        var worksheetPart = (WorksheetPart)workbookPart.GetPartById(sheet.Id!);
+        var rows = worksheetPart.Worksheet.Descendants<Spreadsheet.Row>().ToList();
+        if (rows.Count < 2)
         {
-            excelApp?.Quit();
-        }
-        catch
-        {
+            return "Файл не содержит данных для импорта.";
         }
 
-        ReleaseComObject(excelRange);
-        ReleaseComObject(excelWorksheet);
-        ReleaseComObject(excelSheets);
-        ReleaseComObject(excelWorkbook);
-        ReleaseComObject(excelWindow);
-        ReleaseComObject(excelApp);
+        var headers = GetRowValues(workbookPart, rows[0]);
+        var headerCount = headers.Count;
 
-        excelRange = null;
-        excelWorksheet = null;
-        excelSheets = null;
-        excelWorkbook = null;
-        excelWindow = null;
-        excelApp = null;
+        var addedCustomers = 0;
+        var addedItems = 0;
+        var addedOrders = 0;
+        var skippedOrders = 0;
+        var skippedOrdersMissingData = 0;
+
+        for (var index = 1; index < rows.Count; index++)
+        {
+            var row = rows[index];
+            var values = GetRowValues(workbookPart, row, headerCount);
+            if (values.All(string.IsNullOrWhiteSpace))
+            {
+                continue;
+            }
+
+            var record = new Dictionary<string, string>(StringComparer.InvariantCultureIgnoreCase);
+            for (var i = 0; i < headerCount; i++)
+            {
+                var header = headers[i];
+                if (string.IsNullOrWhiteSpace(header))
+                {
+                    continue;
+                }
+
+                record[header.Trim()] = values[i];
+            }
+
+            record.TryGetValue("CustomerName", out var customerName);
+            record.TryGetValue("ContactPerson", out var contactPerson);
+            record.TryGetValue("Phone", out var phone);
+            record.TryGetValue("Address", out var address);
+            record.TryGetValue("ItemDescription", out var itemDescription);
+            record.TryGetValue("Price", out var priceText);
+            record.TryGetValue("Delivery", out var deliveryText);
+            record.TryGetValue("Quantity", out var quantityText);
+            record.TryGetValue("OrderDate", out var orderDateText);
+
+            if (string.IsNullOrWhiteSpace(customerName) ||
+                string.IsNullOrWhiteSpace(itemDescription) ||
+                string.IsNullOrWhiteSpace(quantityText) ||
+                string.IsNullOrWhiteSpace(orderDateText))
+            {
+                skippedOrdersMissingData++;
+                continue;
+            }
+
+            if (!TryParseIntValue(quantityText, out var quantity) || quantity <= 0)
+            {
+                skippedOrders++;
+                continue;
+            }
+
+            var orderDate = ParseExcelDate(orderDateText);
+            if (orderDate == null)
+            {
+                skippedOrders++;
+                continue;
+            }
+
+            var customer = dbContext.Customers.Local.FirstOrDefault(c => string.Equals(c.Name, customerName, StringComparison.InvariantCultureIgnoreCase));
+            if (customer == null)
+            {
+                customer = new Customer
+                {
+                    Name = customerName.Trim(),
+                    ContactPerson = contactPerson ?? string.Empty,
+                    Phone = phone ?? string.Empty,
+                    Address = address ?? string.Empty
+                };
+                dbContext.Customers.Add(customer);
+                addedCustomers++;
+            }
+            else
+            {
+                if (!string.IsNullOrWhiteSpace(contactPerson) && string.IsNullOrWhiteSpace(customer.ContactPerson))
+                {
+                    customer.ContactPerson = contactPerson!;
+                }
+
+                if (!string.IsNullOrWhiteSpace(phone) && string.IsNullOrWhiteSpace(customer.Phone))
+                {
+                    customer.Phone = phone!;
+                }
+
+                if (!string.IsNullOrWhiteSpace(address) && string.IsNullOrWhiteSpace(customer.Address))
+                {
+                    customer.Address = address!;
+                }
+            }
+
+            var item = dbContext.Items.Local.FirstOrDefault(i => string.Equals(i.Description, itemDescription, StringComparison.InvariantCultureIgnoreCase));
+            if (item == null)
+            {
+                if (string.IsNullOrWhiteSpace(priceText) || !TryParseIntValue(priceText, out var price) || price < 0)
+                {
+                    skippedOrdersMissingData++;
+                    continue;
+                }
+
+                var delivery = ParseExcelBoolean(deliveryText ?? string.Empty);
+                item = new Item
+                {
+                    Description = itemDescription.Trim(),
+                    Price = price,
+                    Delivery = delivery
+                };
+                dbContext.Items.Add(item);
+                addedItems++;
+            }
+            else
+            {
+                if (!string.IsNullOrWhiteSpace(priceText) && TryParseIntValue(priceText, out var parsedPrice) && parsedPrice >= 0)
+                {
+                    item.Price = parsedPrice;
+                }
+
+                if (!string.IsNullOrWhiteSpace(deliveryText))
+                {
+                    item.Delivery = ParseExcelBoolean(deliveryText ?? string.Empty);
+                }
+            }
+
+            var normalizedDate = DateTime.SpecifyKind(orderDate.Value.Date, DateTimeKind.Utc);
+
+            var duplicateOrder = dbContext.Orders.Local.FirstOrDefault(o =>
+                string.Equals(o.Customer.Name, customer.Name, StringComparison.InvariantCultureIgnoreCase) &&
+                string.Equals(o.Item.Description, item.Description, StringComparison.InvariantCultureIgnoreCase) &&
+                o.OrderDate.Date == normalizedDate.Date &&
+                o.Quantity == quantity);
+
+            if (duplicateOrder != null)
+            {
+                skippedOrders++;
+                continue;
+            }
+
+            var newOrder = new Order
+            {
+                Customer = customer,
+                CustomerId = customer.CustomerId,
+                Item = item,
+                ItemId = item.ItemId,
+                Quantity = quantity,
+                OrderDate = normalizedDate
+            };
+
+            dbContext.Orders.Add(newOrder);
+            addedOrders++;
+        }
+
+        dbContext.SaveChanges();
+
+        return $"Импорт завершен.\nКлиенты: добавлено {addedCustomers}.\nТовары: добавлено {addedItems}.\nЗаказы: добавлено {addedOrders}.\nПропущено заказов (дубликаты/ошибки): {skippedOrders}.\nПропущено строк из-за отсутствующих данных: {skippedOrdersMissingData}.";
     }
 
-    private static string GetColumnLetter(int index)
+    private (uint HeaderStyleIndex, uint CurrencyStyleIndex, uint DateStyleIndex, uint NumberStyleIndex) CreateStylesheet(SpreadsheetDocument document)
     {
-        var dividend = index;
-        var columnName = string.Empty;
+        var stylesPart = document.WorkbookPart!.AddNewPart<WorkbookStylesPart>();
 
-        while (dividend > 0)
-        {
-            var modulo = (dividend - 1) % 26;
-            columnName = Convert.ToChar('A' + modulo) + columnName;
-            dividend = (dividend - modulo) / 26;
-        }
+        var fonts = new Spreadsheet.Fonts(
+            new Spreadsheet.Font(),
+            new Spreadsheet.Font(new Spreadsheet.Bold()));
 
-        return columnName;
+        var fills = new Spreadsheet.Fills(
+            new Spreadsheet.Fill(new Spreadsheet.PatternFill { PatternType = Spreadsheet.PatternValues.None }),
+            new Spreadsheet.Fill(new Spreadsheet.PatternFill { PatternType = Spreadsheet.PatternValues.Gray125 }));
+
+        var borders = new Spreadsheet.Borders(new Spreadsheet.Border());
+
+        var cellFormats = new Spreadsheet.CellFormats(
+            new Spreadsheet.CellFormat(),
+            new Spreadsheet.CellFormat { FontId = 1, ApplyFont = true },
+            new Spreadsheet.CellFormat { NumberFormatId = 4, ApplyNumberFormat = true },
+            new Spreadsheet.CellFormat { NumberFormatId = 14, ApplyNumberFormat = true },
+            new Spreadsheet.CellFormat { NumberFormatId = 1, ApplyNumberFormat = true });
+
+        stylesPart.Stylesheet = new Spreadsheet.Stylesheet(fonts, fills, borders, cellFormats);
+        stylesPart.Stylesheet.Save();
+
+        return (1u, 2u, 3u, 4u);
     }
 
-    private static object? GetRangeValue(Excel.Range usedRange, int row, int column, out string text)
+    private static Spreadsheet.Row CreateHeaderRow(uint headerStyleIndex, params string[] headers)
     {
-        Excel.Range? cell = null;
-        try
+        var row = new Spreadsheet.Row();
+        foreach (var header in headers)
         {
-            cell = usedRange.Cells[row, column] as Excel.Range;
-            var raw = cell?.Value2;
-            text = NormalizeExcelText(raw);
-            return raw;
+            row.Append(CreateTextCell(header, headerStyleIndex));
         }
-        finally
-        {
-            ReleaseComObject(cell);
-        }
+
+        return row;
     }
 
-    private static string NormalizeExcelText(object? value)
+    private static Spreadsheet.Cell CreateTextCell(string? value, uint? styleIndex = null)
     {
-        if (value == null)
+        var cell = new Spreadsheet.Cell
+        {
+            DataType = Spreadsheet.CellValues.String,
+            CellValue = new Spreadsheet.CellValue(value ?? string.Empty)
+        };
+
+        if (styleIndex.HasValue)
+        {
+            cell.StyleIndex = styleIndex.Value;
+        }
+
+        return cell;
+    }
+
+    private static Spreadsheet.Cell CreateNumberCell(int value, uint? styleIndex = null)
+    {
+        return CreateNumberCell((double)value, styleIndex);
+    }
+
+    private static Spreadsheet.Cell CreateNumberCell(double value, uint? styleIndex = null)
+    {
+        var cell = new Spreadsheet.Cell
+        {
+            DataType = Spreadsheet.CellValues.Number,
+            CellValue = new Spreadsheet.CellValue(value.ToString(CultureInfo.InvariantCulture))
+        };
+
+        if (styleIndex.HasValue)
+        {
+            cell.StyleIndex = styleIndex.Value;
+        }
+
+        return cell;
+    }
+
+    private static Spreadsheet.Cell CreateNumberCell(decimal value, uint? styleIndex = null)
+    {
+        return CreateNumberCell((double)value, styleIndex);
+    }
+
+    private static Spreadsheet.Cell CreateDateCell(DateTime value, uint styleIndex)
+    {
+        var cell = new Spreadsheet.Cell
+        {
+            DataType = Spreadsheet.CellValues.Number,
+            CellValue = new Spreadsheet.CellValue(value.ToOADate().ToString(CultureInfo.InvariantCulture)),
+            StyleIndex = styleIndex
+        };
+
+        return cell;
+    }
+
+    private static List<string> GetRowValues(WorkbookPart workbookPart, Spreadsheet.Row row, int expectedColumns = 0)
+    {
+        var values = expectedColumns > 0
+            ? Enumerable.Repeat(string.Empty, expectedColumns).ToList()
+            : new List<string>();
+
+        foreach (var cell in row.Elements<Spreadsheet.Cell>())
+        {
+            var index = GetColumnIndex(cell.CellReference?.Value ?? string.Empty);
+            if (index < 0)
+            {
+                continue;
+            }
+
+            var value = GetCellValue(workbookPart, cell);
+
+            if (expectedColumns > 0)
+            {
+                if (index < values.Count)
+                {
+                    values[index] = value;
+                }
+            }
+            else
+            {
+                while (values.Count <= index)
+                {
+                    values.Add(string.Empty);
+                }
+
+                values[index] = value;
+            }
+        }
+
+        return values.Select(v => v?.Trim() ?? string.Empty).ToList();
+    }
+
+    private static string GetCellValue(WorkbookPart workbookPart, Spreadsheet.Cell cell)
+    {
+        if (cell == null)
         {
             return string.Empty;
         }
 
-        return value switch
-        {
-            string text => text.Trim(),
-            bool flag => flag ? "TRUE" : "FALSE",
-            double number when Math.Abs(number - Math.Round(number)) < double.Epsilon => Math.Round(number).ToString("0", CultureInfo.InvariantCulture),
-            double number => number.ToString(CultureInfo.InvariantCulture),
-            DateTime dateTime => dateTime.ToString("d", CultureInfo.InvariantCulture),
-            _ => value.ToString()?.Trim() ?? string.Empty
-        };
-    }
+        var value = cell.CellValue?.InnerText ?? string.Empty;
 
-    private static DateTime? ConvertExcelDate(object? value)
-    {
-        if (value == null)
+        if (cell.DataType == null && cell.CellValue != null)
         {
-            return null;
+            return cell.CellValue.InnerText;
         }
 
-        if (value is double doubleValue)
+        var dataType = cell.DataType?.Value;
+
+        if (dataType == Spreadsheet.CellValues.SharedString)
+        {
+            var sharedStringTable = workbookPart.SharedStringTablePart?.SharedStringTable;
+            if (sharedStringTable == null || !int.TryParse(value, out var sharedStringIndex))
+            {
+                return value;
+            }
+
+            return sharedStringTable.ElementAt(sharedStringIndex).InnerText;
+        }
+
+        if (dataType == Spreadsheet.CellValues.Boolean)
+        {
+            return value == "1" ? "TRUE" : "FALSE";
+        }
+
+        return value;
+    }
+
+    private static int GetColumnIndex(string cellReference)
+    {
+        if (string.IsNullOrEmpty(cellReference))
+        {
+            return -1;
+        }
+
+        var columnReference = new string(cellReference.Where(char.IsLetter).ToArray()).ToUpperInvariant();
+        if (string.IsNullOrEmpty(columnReference))
+        {
+            return -1;
+        }
+
+        var index = 0;
+        foreach (var c in columnReference)
+        {
+            index *= 26;
+            index += c - 'A' + 1;
+        }
+
+        return index - 1;
+    }
+
+    private static bool TryParseIntValue(string value, out int number)
+    {
+        return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out number) ||
+               int.TryParse(value, NumberStyles.Integer, CultureInfo.CurrentCulture, out number);
+    }
+
+    private static DateTime? ParseExcelDate(string value)
+    {
+        if (double.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out var oa))
         {
             try
             {
-                return DateTime.FromOADate(doubleValue);
+                return DateTime.FromOADate(oa);
             }
             catch
             {
@@ -1013,29 +1027,17 @@ public partial class MainForm : Form
             }
         }
 
-        if (value is DateTime dateTime)
+        if (DateTime.TryParse(value, CultureInfo.CurrentCulture, DateTimeStyles.AssumeLocal, out var currentCulture))
         {
-            return dateTime;
+            return currentCulture;
         }
 
-        var stringValue = value.ToString();
-        if (DateTime.TryParse(stringValue, CultureInfo.CurrentCulture, DateTimeStyles.AssumeLocal, out var parsed))
+        if (DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var invariantCulture))
         {
-            return parsed;
-        }
-
-        if (DateTime.TryParse(stringValue, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out parsed))
-        {
-            return parsed;
+            return invariantCulture;
         }
 
         return null;
-    }
-
-    private static bool TryParseIntValue(string value, out int number)
-    {
-        return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out number) ||
-               int.TryParse(value, NumberStyles.Integer, CultureInfo.CurrentCulture, out number);
     }
 
     private static bool ParseExcelBoolean(string value)
@@ -1058,24 +1060,6 @@ public partial class MainForm : Form
 
         return string.Equals(value, "да", StringComparison.InvariantCultureIgnoreCase) ||
                string.Equals(value, "yes", StringComparison.InvariantCultureIgnoreCase);
-    }
-
-    private static void ReleaseComObject(object? component)
-    {
-        if (component == null)
-        {
-            return;
-        }
-
-        try
-        {
-            while (Marshal.ReleaseComObject(component) > 0)
-            {
-            }
-        }
-        catch
-        {
-        }
     }
 
     private void dateTimePickerOrderDate_ValueChanged(object? sender, EventArgs e)
