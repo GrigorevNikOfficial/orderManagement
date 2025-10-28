@@ -545,6 +545,45 @@ public partial class MainForm : Form
         }
     }
 
+    private void buttonOrderExportExcelByDate_Click(object? sender, EventArgs e)
+    {
+        if (!dateTimePickerOrderDate.Checked)
+        {
+            MessageBox.Show("Отметьте флажок около поля даты перед экспортом.", "Экспорт по дате", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var targetDate = DateOnly.FromDateTime(dateTimePickerOrderDate.Value.Date);
+
+        try
+        {
+            var allOrders = dbContext.Orders
+                .Include(o => o.Customer)
+                .Include(o => o.Item)
+                .ToList();
+
+            var ordersForDate = allOrders
+                .Where(o => DateOnly.FromDateTime(o.OrderDate.ToLocalTime().Date) == targetDate)
+                .OrderBy(o => o.Customer.Name)
+                .ThenBy(o => o.OrderDate)
+                .ToList();
+
+            if (ordersForDate.Count == 0)
+            {
+                MessageBox.Show("Заказов на выбранную дату нет.", "Экспорт по дате", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var filePath = CreateOrdersExcelReport(ordersForDate, targetDate);
+            MessageBox.Show($"Файл сохранен: {filePath}", "Экспорт завершен", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            OpenFile(filePath);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Ошибка при экспорте: {ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
     private void buttonOrderImportExcel_Click(object? sender, EventArgs e)
     {
         using var dialog = new OpenFileDialog
@@ -572,11 +611,13 @@ public partial class MainForm : Form
         }
     }
 
-    private string CreateOrdersExcelReport(IReadOnlyCollection<Order> orders)
+    private string CreateOrdersExcelReport(IReadOnlyCollection<Order> orders, DateOnly? filterDate = null)
     {
         var folderPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "orderManagementReports");
         Directory.CreateDirectory(folderPath);
-        var fileName = $"Orders_{DateTime.Now:yyyyMMdd_HHmm}.xlsx";
+        var fileName = filterDate.HasValue
+            ? $"Orders_{filterDate:yyyyMMdd}_{DateTime.Now:HHmm}.xlsx"
+            : $"Orders_{DateTime.Now:yyyyMMdd_HHmm}.xlsx";
         var filePath = Path.Combine(folderPath, fileName);
 
         using var document = SpreadsheetDocument.Create(filePath, SpreadsheetDocumentType.Workbook);
