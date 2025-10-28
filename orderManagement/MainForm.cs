@@ -43,6 +43,14 @@ public partial class MainForm : Form
             dataGridView2.DataSource = dbContext.Items.Local.ToBindingList();
             dataGridView3.DataSource = dbContext.Orders.Local.ToBindingList();
             
+            if (dataGridView1.Columns.Contains("Orders"))
+            {
+                dataGridView1.Columns["Orders"].Visible = false;
+            }
+            if (dataGridView2.Columns.Contains("Orders"))
+            {
+                dataGridView2.Columns["Orders"].Visible = false;
+            }
             if (dataGridView3.Columns.Contains("CustomerId")) 
             { 
                 dataGridView3.Columns["CustomerId"].Visible = false; 
