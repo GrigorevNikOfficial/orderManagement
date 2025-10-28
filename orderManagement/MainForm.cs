@@ -5,11 +5,14 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Globalization;
 using System.Windows.Forms;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using Microsoft.EntityFrameworkCore;
+using System.Runtime.InteropServices;
+using Excel = Microsoft.Office.Interop.Excel;
 using orderManagement.Data;
 using orderManagement.Forms;
 using orderManagement.Models;
@@ -22,6 +25,12 @@ public partial class MainForm : Form
     private bool customerFilterActive;
     private bool itemFilterActive;
     private bool orderFilterActive;
+    private Excel.Application? excelApp;
+    private Excel.Window? excelWindow;
+    private Excel.Workbook? excelWorkbook;
+    private Excel.Sheets? excelSheets;
+    private Excel.Worksheet? excelWorksheet;
+    private Excel.Range? excelRange;
 
     public MainForm()
     {
@@ -513,6 +522,559 @@ public partial class MainForm : Form
         catch (Exception ex)
         {
             MessageBox.Show($"Ошибка при формировании отчета: {ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void buttonOrderExportExcel_Click(object? sender, EventArgs e)
+    {
+        var orders = dbContext.Orders
+            .Include(o => o.Customer)
+            .Include(o => o.Item)
+            .OrderBy(o => o.Customer.Name)
+            .ThenBy(o => o.OrderDate)
+            .ToList();
+
+        if (orders.Count == 0)
+        {
+            MessageBox.Show("Нет данных для экспорта.", "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        string? savedPath = null;
+
+        try
+        {
+            OpenExcelDocument();
+            BuildOrdersExcelReport(orders);
+            savedPath = SaveExcelWorkbook();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Ошибка при экспорте: {ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            ReleaseExcelResources();
+        }
+
+        if (!string.IsNullOrWhiteSpace(savedPath))
+        {
+            MessageBox.Show($"Файл сохранен: {savedPath}", "Экспорт завершен", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            OpenFile(savedPath);
+        }
+    }
+
+    private void buttonOrderImportExcel_Click(object? sender, EventArgs e)
+    {
+        using var dialog = new OpenFileDialog
+        {
+            Filter = "Excel (*.xlsx)|*.xlsx",
+            Title = "Выберите документ для загрузки данных"
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        Excel.Application? importApp = null;
+        Excel.Workbook? importWorkbook = null;
+        Excel.Worksheet? importWorksheet = null;
+        Excel.Range? usedRange = null;
+        string? summary = null;
+
+        try
+        {
+            importApp = new Excel.Application();
+            importWorkbook = importApp.Workbooks.Open(dialog.FileName);
+            importWorksheet = (Excel.Worksheet)importWorkbook.Worksheets[1];
+            usedRange = importWorksheet.UsedRange;
+
+            var rowCount = usedRange.Rows.Count;
+            if (rowCount < 4)
+            {
+                MessageBox.Show("Файл не содержит данных для импорта.", "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var addedCustomers = 0;
+            var addedItems = 0;
+            var addedOrders = 0;
+            var skippedOrders = 0;
+            var skippedOrdersMissingData = 0;
+
+            for (var row = 4; row <= rowCount; row++)
+            {
+                GetRangeValue(usedRange, row, 1, out var customerName);
+                if (string.IsNullOrWhiteSpace(customerName))
+                {
+                    continue;
+                }
+
+                if (string.Equals(customerName, "Итого", StringComparison.InvariantCultureIgnoreCase))
+                {
+                    continue;
+                }
+
+                GetRangeValue(usedRange, row, 2, out var contactPerson);
+                GetRangeValue(usedRange, row, 3, out var phone);
+                GetRangeValue(usedRange, row, 4, out var address);
+                GetRangeValue(usedRange, row, 5, out var itemDescription);
+                GetRangeValue(usedRange, row, 6, out var priceText);
+                GetRangeValue(usedRange, row, 7, out var deliveryText);
+                GetRangeValue(usedRange, row, 8, out var quantityText);
+                var dateRaw = GetRangeValue(usedRange, row, 9, out var dateText);
+
+                if (string.IsNullOrWhiteSpace(itemDescription) || string.IsNullOrWhiteSpace(quantityText))
+                {
+                    skippedOrdersMissingData++;
+                    continue;
+                }
+
+                if (!TryParseIntValue(quantityText, out var quantity) || quantity <= 0)
+                {
+                    skippedOrders++;
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(dateText))
+                {
+                    skippedOrdersMissingData++;
+                    continue;
+                }
+
+                var orderDate = ConvertExcelDate(dateRaw ?? (object?)dateText);
+                if (orderDate == null)
+                {
+                    skippedOrders++;
+                    continue;
+                }
+
+                var customer = dbContext.Customers.Local.FirstOrDefault(c => string.Equals(c.Name, customerName, StringComparison.InvariantCultureIgnoreCase));
+                if (customer == null)
+                {
+                    customer = new Customer
+                    {
+                        Name = customerName,
+                        ContactPerson = contactPerson,
+                        Phone = phone,
+                        Address = address
+                    };
+                    dbContext.Customers.Add(customer);
+                    addedCustomers++;
+                }
+                else
+                {
+                    if (!string.IsNullOrWhiteSpace(contactPerson) && string.IsNullOrWhiteSpace(customer.ContactPerson))
+                    {
+                        customer.ContactPerson = contactPerson;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(phone) && string.IsNullOrWhiteSpace(customer.Phone))
+                    {
+                        customer.Phone = phone;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(address) && string.IsNullOrWhiteSpace(customer.Address))
+                    {
+                        customer.Address = address;
+                    }
+                }
+
+                var item = dbContext.Items.Local.FirstOrDefault(i => string.Equals(i.Description, itemDescription, StringComparison.InvariantCultureIgnoreCase));
+                if (item == null)
+                {
+                    if (string.IsNullOrWhiteSpace(priceText) || !TryParseIntValue(priceText, out var price) || price < 0)
+                    {
+                        skippedOrdersMissingData++;
+                        continue;
+                    }
+
+                    var delivery = ParseExcelBoolean(deliveryText);
+                    item = new Item
+                    {
+                        Description = itemDescription,
+                        Price = price,
+                        Delivery = delivery
+                    };
+                    dbContext.Items.Add(item);
+                    addedItems++;
+                }
+                else
+                {
+                    if (!string.IsNullOrWhiteSpace(priceText) && TryParseIntValue(priceText, out var parsedPrice) && parsedPrice >= 0)
+                    {
+                        item.Price = parsedPrice;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(deliveryText))
+                    {
+                        item.Delivery = ParseExcelBoolean(deliveryText);
+                    }
+                }
+
+                var normalizedDate = DateTime.SpecifyKind(orderDate.Value.Date, DateTimeKind.Utc);
+
+                var duplicateOrder = dbContext.Orders.Local.FirstOrDefault(o =>
+                    string.Equals(o.Customer.Name, customer.Name, StringComparison.InvariantCultureIgnoreCase) &&
+                    string.Equals(o.Item.Description, item.Description, StringComparison.InvariantCultureIgnoreCase) &&
+                    o.OrderDate.Date == normalizedDate.Date &&
+                    o.Quantity == quantity);
+
+                if (duplicateOrder != null)
+                {
+                    skippedOrders++;
+                    continue;
+                }
+
+                var newOrder = new Order
+                {
+                    Customer = customer,
+                    CustomerId = customer.CustomerId,
+                    Item = item,
+                    ItemId = item.ItemId,
+                    Quantity = quantity,
+                    OrderDate = normalizedDate
+                };
+
+                dbContext.Orders.Add(newOrder);
+                addedOrders++;
+            }
+
+            dbContext.SaveChanges();
+            RefreshCustomersView();
+            RefreshItemsView();
+            RefreshOrdersView();
+
+            summary = $"Импорт завершен.\nКлиенты: добавлено {addedCustomers}.\nТовары: добавлено {addedItems}.\nЗаказы: добавлено {addedOrders}.\nПропущено заказов (дубликаты/ошибки): {skippedOrders}.\nПропущено строк из-за отсутствующих данных: {skippedOrdersMissingData}.";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Ошибка импорта: {ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            importWorkbook?.Close(false);
+            importApp?.Quit();
+            ReleaseComObject(usedRange);
+            ReleaseComObject(importWorksheet);
+            ReleaseComObject(importWorkbook);
+            ReleaseComObject(importApp);
+        }
+
+        if (!string.IsNullOrWhiteSpace(summary))
+        {
+            MessageBox.Show(summary, "Импорт завершен", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+    }
+
+    private void OpenExcelDocument()
+    {
+        excelApp = new Excel.Application
+        {
+            DisplayAlerts = false
+        };
+        excelWorkbook = excelApp.Workbooks.Add();
+        excelWindow = excelApp.ActiveWindow;
+        excelSheets = excelWorkbook.Worksheets;
+        excelWorksheet = (Excel.Worksheet)excelSheets[1];
+        excelWorksheet.Name = "Заказы";
+    }
+
+    private void BuildOrdersExcelReport(IReadOnlyCollection<Order> orders)
+    {
+        var sheet = RequireWorksheet();
+
+        ReleaseComObject(excelRange);
+        excelRange = sheet.get_Range("A1", "F1");
+        excelRange.Merge(Type.Missing);
+        excelRange.Value2 = "Отчет по заказам";
+        excelRange.Font.Bold = true;
+        excelRange.Font.Size = 16;
+        excelRange.HorizontalAlignment = Excel.XlHAlign.xlHAlignCenter;
+
+        PutCell("F2", DateTime.Now.ToString("d", CultureInfo.CurrentCulture));
+        if (excelRange != null)
+        {
+            excelRange.HorizontalAlignment = Excel.XlHAlign.xlHAlignRight;
+        }
+
+        var rowIndex = 4;
+        var groups = orders
+            .OrderBy(o => o.Customer.Name, StringComparer.InvariantCultureIgnoreCase)
+            .ThenBy(o => o.OrderDate)
+            .GroupBy(o => o.Customer.Name, StringComparer.InvariantCultureIgnoreCase);
+
+        foreach (var group in groups)
+        {
+            rowIndex = WriteCustomerOrdersGroup(group.Key, group.ToList(), rowIndex);
+        }
+
+        sheet.Columns.AutoFit();
+    }
+
+    private int WriteCustomerOrdersGroup(string customerName, List<Order> orders, int startRow)
+    {
+        var sheet = RequireWorksheet();
+
+        ReleaseComObject(excelRange);
+        excelRange = sheet.get_Range($"A{startRow}", $"F{startRow}");
+        excelRange.Merge(Type.Missing);
+        excelRange.Value2 = customerName;
+        excelRange.Font.Bold = true;
+        excelRange.Font.Italic = true;
+        excelRange.Interior.ColorIndex = 45;
+        excelRange.HorizontalAlignment = Excel.XlHAlign.xlHAlignCenter;
+        excelRange.BorderAround(Excel.XlLineStyle.xlContinuous, Excel.XlBorderWeight.xlThin, Excel.XlColorIndex.xlColorIndexAutomatic, Type.Missing);
+
+        startRow++;
+
+        WriteExcelHeaderRow(startRow);
+        startRow++;
+
+        var index = 1;
+        var totalQuantity = 0;
+        var totalCost = 0;
+
+        foreach (var order in orders.OrderBy(o => o.OrderDate).ThenBy(o => o.OrderId))
+        {
+            PutCellBorder($"A{startRow}", index.ToString(CultureInfo.InvariantCulture));
+            PutCellBorder($"B{startRow}", order.OrderDate.ToLocalTime().ToString("d", CultureInfo.CurrentCulture));
+            PutCellBorder($"C{startRow}", order.Item.Description);
+            PutCellBorder($"D{startRow}", order.Quantity.ToString(CultureInfo.InvariantCulture));
+            PutCellBorder($"E{startRow}", order.Item.Price.ToString("N0", CultureInfo.CurrentCulture));
+            PutCellBorder($"F{startRow}", order.TotalCost.ToString("N0", CultureInfo.CurrentCulture));
+
+            index++;
+            totalQuantity += order.Quantity;
+            totalCost += order.TotalCost;
+            startRow++;
+        }
+
+        PutCell($"A{startRow}", $"Итого: заказов {orders.Count}, количество {totalQuantity}, сумма {totalCost.ToString("N0", CultureInfo.CurrentCulture)} руб.");
+        ReleaseComObject(excelRange);
+        excelRange = sheet.get_Range($"A{startRow}", $"F{startRow}");
+        excelRange.Merge(Type.Missing);
+        excelRange.Font.Italic = true;
+        excelRange.HorizontalAlignment = Excel.XlHAlign.xlHAlignRight;
+        excelRange.Interior.ColorIndex = 50;
+        excelRange.BorderAround(Excel.XlLineStyle.xlContinuous, Excel.XlBorderWeight.xlThin, Excel.XlColorIndex.xlColorIndexAutomatic, Type.Missing);
+
+        return startRow + 2;
+    }
+
+    private void WriteExcelHeaderRow(int rowIndex)
+    {
+        var headers = new[] { "№", "Дата", "Товар", "Количество", "Цена", "Сумма" };
+        for (var i = 0; i < headers.Length; i++)
+        {
+            var cellAddress = $"{GetColumnLetter(i + 1)}{rowIndex}";
+            PutCellBorder(cellAddress, headers[i]);
+            if (excelRange != null)
+            {
+                excelRange.Font.Bold = true;
+                excelRange.HorizontalAlignment = Excel.XlHAlign.xlHAlignCenter;
+            }
+        }
+    }
+
+    private void PutCell(string cellAddress, string value)
+    {
+        var sheet = RequireWorksheet();
+        ReleaseComObject(excelRange);
+        excelRange = sheet.get_Range(cellAddress, Type.Missing);
+        excelRange.Value2 = value ?? string.Empty;
+    }
+
+    private void PutCellBorder(string cellAddress, string value)
+    {
+        PutCell(cellAddress, value);
+        excelRange?.BorderAround(Excel.XlLineStyle.xlContinuous, Excel.XlBorderWeight.xlThin, Excel.XlColorIndex.xlColorIndexAutomatic, Type.Missing);
+    }
+
+    private Excel.Worksheet RequireWorksheet()
+    {
+        return excelWorksheet ?? throw new InvalidOperationException("Рабочий лист Excel не инициализирован.");
+    }
+
+    private string SaveExcelWorkbook()
+    {
+        if (excelWorkbook == null)
+        {
+            throw new InvalidOperationException("Рабочая книга Excel не создана.");
+        }
+
+        var folderPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "orderManagementReports");
+        Directory.CreateDirectory(folderPath);
+        var fileName = $"Orders_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+        var filePath = Path.Combine(folderPath, fileName);
+        excelWorkbook.SaveAs(filePath);
+        return filePath;
+    }
+
+    private void ReleaseExcelResources()
+    {
+        try
+        {
+            excelWorkbook?.Close(false);
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            excelApp?.Quit();
+        }
+        catch
+        {
+        }
+
+        ReleaseComObject(excelRange);
+        ReleaseComObject(excelWorksheet);
+        ReleaseComObject(excelSheets);
+        ReleaseComObject(excelWorkbook);
+        ReleaseComObject(excelWindow);
+        ReleaseComObject(excelApp);
+
+        excelRange = null;
+        excelWorksheet = null;
+        excelSheets = null;
+        excelWorkbook = null;
+        excelWindow = null;
+        excelApp = null;
+    }
+
+    private static string GetColumnLetter(int index)
+    {
+        var dividend = index;
+        var columnName = string.Empty;
+
+        while (dividend > 0)
+        {
+            var modulo = (dividend - 1) % 26;
+            columnName = Convert.ToChar('A' + modulo) + columnName;
+            dividend = (dividend - modulo) / 26;
+        }
+
+        return columnName;
+    }
+
+    private static object? GetRangeValue(Excel.Range usedRange, int row, int column, out string text)
+    {
+        Excel.Range? cell = null;
+        try
+        {
+            cell = usedRange.Cells[row, column] as Excel.Range;
+            var raw = cell?.Value2;
+            text = NormalizeExcelText(raw);
+            return raw;
+        }
+        finally
+        {
+            ReleaseComObject(cell);
+        }
+    }
+
+    private static string NormalizeExcelText(object? value)
+    {
+        if (value == null)
+        {
+            return string.Empty;
+        }
+
+        return value switch
+        {
+            string text => text.Trim(),
+            bool flag => flag ? "TRUE" : "FALSE",
+            double number when Math.Abs(number - Math.Round(number)) < double.Epsilon => Math.Round(number).ToString("0", CultureInfo.InvariantCulture),
+            double number => number.ToString(CultureInfo.InvariantCulture),
+            DateTime dateTime => dateTime.ToString("d", CultureInfo.InvariantCulture),
+            _ => value.ToString()?.Trim() ?? string.Empty
+        };
+    }
+
+    private static DateTime? ConvertExcelDate(object? value)
+    {
+        if (value == null)
+        {
+            return null;
+        }
+
+        if (value is double doubleValue)
+        {
+            try
+            {
+                return DateTime.FromOADate(doubleValue);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        if (value is DateTime dateTime)
+        {
+            return dateTime;
+        }
+
+        var stringValue = value.ToString();
+        if (DateTime.TryParse(stringValue, CultureInfo.CurrentCulture, DateTimeStyles.AssumeLocal, out var parsed))
+        {
+            return parsed;
+        }
+
+        if (DateTime.TryParse(stringValue, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out parsed))
+        {
+            return parsed;
+        }
+
+        return null;
+    }
+
+    private static bool TryParseIntValue(string value, out int number)
+    {
+        return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out number) ||
+               int.TryParse(value, NumberStyles.Integer, CultureInfo.CurrentCulture, out number);
+    }
+
+    private static bool ParseExcelBoolean(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        if (bool.TryParse(value, out var booleanValue))
+        {
+            return booleanValue;
+        }
+
+        if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var intValue) ||
+            int.TryParse(value, NumberStyles.Integer, CultureInfo.CurrentCulture, out intValue))
+        {
+            return intValue != 0;
+        }
+
+        return string.Equals(value, "да", StringComparison.InvariantCultureIgnoreCase) ||
+               string.Equals(value, "yes", StringComparison.InvariantCultureIgnoreCase);
+    }
+
+    private static void ReleaseComObject(object? component)
+    {
+        if (component == null)
+        {
+            return;
+        }
+
+        try
+        {
+            while (Marshal.ReleaseComObject(component) > 0)
+            {
+            }
+        }
+        catch
+        {
         }
     }
 
